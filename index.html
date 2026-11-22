@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ike</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400..600&family=Geist+Mono:wght@400..600&display=swap" rel="stylesheet" referrerpolicy="no-referrer">
+<link href="https://vercel.com/geist/vercel-brand.css" rel="stylesheet">
+<style>
+  .vbg-custom-page {
+    container-type: inline-size;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--vbg-space-8);
+    & > * { margin: 0; }
+  }
+
+  .vbg-custom-add {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--vbg-space-3);
+    & > [type=text] { flex: 1 1 20rem; }
+  }
+  .vbg-custom-tools {
+    display: flex;
+    gap: var(--vbg-space-2);
+    margin-inline-start: auto;
+  }
+
+  .vbg-custom-matrix {
+    display: grid;
+    grid-template-columns: auto repeat(2, minmax(0, 1fr));
+    & > :first-child { grid-column-start: 2; }
+  }
+  .vbg-custom-haxis { padding: 0 var(--vbg-space-6) var(--vbg-space-3); }
+  .vbg-custom-vaxis {
+    writing-mode: vertical-rl;
+    text-orientation: upright;
+    padding: var(--vbg-space-6) var(--vbg-space-4) 0 0;
+  }
+
+  .vbg-custom-quad {
+    display: grid;
+    align-content: start;
+    gap: var(--vbg-space-4);
+    min-block-size: 17.5rem;
+    padding: var(--vbg-space-6);
+    border: 0 solid var(--vbg-border-default);
+    & > * { margin: 0; }
+    &:where([data-q="1"]) { border-inline-end-width: 1px; border-block-end-width: 1px; }
+    &:where([data-q="2"]) { border-block-end-width: 1px; }
+    &:where([data-q="3"]) { border-inline-end-width: 1px; }
+    & ul {
+      list-style: none;
+      padding: 0;
+      max-block-size: 60svh;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-width: thin;
+    }
+  }
+
+  .vbg-custom-task {
+    display: flex;
+    align-items: center;
+    gap: var(--vbg-space-3);
+    padding-block: var(--vbg-space-2);
+    & + & { border-block-start: 1px solid var(--vbg-border-subtle); }
+    &:has(:checked) .vbg-custom-text { text-decoration: line-through; color: var(--vbg-text-secondary); }
+  }
+  .vbg-custom-text { flex: 1; overflow-wrap: anywhere; unicode-bidi: isolate; }
+  .vbg-custom-meta {
+    inline-size: auto;
+    &[type=text] { field-sizing: content; min-inline-size: 4em; max-inline-size: 8em; text-overflow: ellipsis; }
+    font-size: var(--vbg-type-label);
+    color: var(--vbg-text-secondary);
+    background: transparent;
+    border-color: transparent;
+    &:is(:hover, :focus) { border-color: var(--vbg-border-default); }
+  }
+  .vbg-custom-remove {
+    border: 0;
+    background: none;
+    font-size: var(--vbg-type-body);
+    color: var(--vbg-text-secondary);
+    @media (hover: hover) {
+      opacity: 0;
+      .vbg-custom-task:is(:hover, :focus-within) & { opacity: 1; }
+    }
+  }
+
+  @container (width < 45rem) {
+    .vbg-custom-matrix { grid-template-columns: minmax(0, 1fr); }
+    .vbg-custom-haxis, .vbg-custom-vaxis { display: none; }
+    .vbg-custom-quad { border-width: 0; padding-inline: 0; min-block-size: 6rem; }
+    .vbg-custom-quad ul { max-block-size: none; }
+    .vbg-custom-tools { margin-inline-start: 0; }
+  }
+</style>
+</head>
+<body class="vbg-report">
+<div class="vbg-shell">
+  <a class="vbg-skip-link" href="#main">跳到内容</a>
+  <main id="main" class="vbg-custom-page">
+    <h1 class="vbg-title">ike</h1>
+
+    <form id="add" class="vbg-custom-add">
+      <input type="text" name="title" placeholder="新任务" aria-label="新任务" autocomplete="off" />
+      <label><input type="checkbox" name="important" /> 重要</label>
+      <label><input type="checkbox" name="urgent" /> 紧急</label>
+      <button class="vbg-button">添加</button>
+      <div class="vbg-custom-tools">
+        <button class="vbg-button" type="button" id="clear-done">清除已完成</button>
+        <button class="vbg-button" type="button" id="export">导出</button>
+        <button class="vbg-button" type="button" id="import">导入</button>
+        <input type="file" id="file" accept="application/json" hidden />
+      </div>
+    </form>
+
+    <div class="vbg-custom-matrix" id="matrix">
+      <span class="vbg-label vbg-custom-haxis">紧急</span>
+      <span class="vbg-label vbg-custom-haxis">不紧急</span>
+      <span class="vbg-label vbg-custom-vaxis">重要</span>
+      <section class="vbg-custom-quad" data-q="1" aria-labelledby="q1"><h2 class="vbg-heading-20" id="q1">立即处理</h2><ul></ul></section>
+      <section class="vbg-custom-quad" data-q="2" aria-labelledby="q2"><h2 class="vbg-heading-20" id="q2">安排时间</h2><ul></ul></section>
+      <span class="vbg-label vbg-custom-vaxis">不重要</span>
+      <section class="vbg-custom-quad" data-q="3" aria-labelledby="q3"><h2 class="vbg-heading-20" id="q3">委派他人</h2><ul></ul></section>
+      <section class="vbg-custom-quad" data-q="4" aria-labelledby="q4"><h2 class="vbg-heading-20" id="q4">直接舍弃</h2><ul></ul></section>
+    </div>
+  </main>
+</div>
+
+<template id="task-row">
+  <li class="vbg-custom-task">
+    <input type="checkbox" aria-label="完成" />
+    <span class="vbg-custom-text"></span>
+    <button class="vbg-custom-remove" type="button" aria-label="删除">×</button>
+  </li>
+</template>
+
+<script type="module">
+const META = { 2: { type: "date", label: "计划日期" }, 3: { type: "text", label: "交给" } };
+const KEY = "ike-tasks";
+const matrix = document.getElementById("matrix");
+const form = document.getElementById("add");
+const file = document.getElementById("file");
+const rowTemplate = document.getElementById("task-row").content.firstElementChild;
+let tasks = JSON.parse(localStorage.getItem(KEY) ?? "[]");
+
+function update() {
+  localStorage.setItem(KEY, JSON.stringify(tasks));
+  render();
+}
+
+function renderTask(t) {
+  const li = rowTemplate.cloneNode(true);
+  li.dataset.id = t.id;
+  li.querySelector("[type=checkbox]").checked = t.done;
+  li.querySelector(".vbg-custom-text").textContent = t.title;
+  const meta = META[t.q];
+  if (meta) {
+    const input = Object.assign(document.createElement("input"), {
+      className: "vbg-custom-meta", type: meta.type, placeholder: meta.label, value: t.meta ?? "",
+    });
+    input.ariaLabel = meta.label;
+    li.lastElementChild.before(input);
+  }
+  return li;
+}
+
+const byDate = (a, b) => !a.meta - !b.meta || (a.meta ?? "").localeCompare(b.meta ?? "");
+
+function render() {
+  const groups = Object.groupBy(tasks, t => t.q);
+  for (const sec of matrix.querySelectorAll("section")) {
+    const q = Number(sec.dataset.q);
+    const list = (groups[q] ?? []).toSorted((a, b) => a.done - b.done || (q === 2 ? byDate(a, b) : 0));
+    sec.querySelector("ul").replaceChildren(...list.map(renderTask));
+  }
+}
+
+const taskOf = el => tasks.find(t => t.id === el.closest("li")?.dataset.id);
+
+matrix.addEventListener("change", e => {
+  const t = taskOf(e.target);
+  if (e.target.type === "checkbox") t.done = e.target.checked;
+  else t.meta = e.target.value;
+  update();
+});
+matrix.addEventListener("click", e => {
+  if (!e.target.matches(".vbg-custom-remove")) return;
+  const t = taskOf(e.target);
+  tasks = tasks.filter(x => x !== t);
+  update();
+});
+matrix.addEventListener("dblclick", e => {
+  const text = e.target.closest(".vbg-custom-text");
+  if (!text) return;
+  text.contentEditable = "plaintext-only";
+  text.focus();
+  getSelection().selectAllChildren(text);
+});
+matrix.addEventListener("keydown", e => {
+  if (!e.target.isContentEditable) return;
+  if (e.key === "Escape") e.target.textContent = taskOf(e.target).title;
+  if (e.key === "Enter" || e.key === "Escape") { e.preventDefault(); e.target.blur(); }
+});
+matrix.addEventListener("focusout", e => {
+  if (!e.target.isContentEditable) return;
+  const title = e.target.textContent.trim();
+  if (title) taskOf(e.target).title = title;
+  update();
+});
+
+form.addEventListener("submit", e => {
+  e.preventDefault();
+  const { title, important, urgent } = form.elements;
+  const value = title.value.trim();
+  if (!value) return;
+  tasks.push({ id: crypto.randomUUID(), title: value, q: 1 + !urgent.checked + 2 * !important.checked, done: false });
+  update();
+  title.value = "";
+  title.focus();
+});
+
+document.getElementById("clear-done").addEventListener("click", () => {
+  tasks = tasks.filter(t => !t.done);
+  update();
+});
+document.getElementById("export").addEventListener("click", () => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(tasks, null, 2)], { type: "application/json" }));
+  a.download = `ike-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+document.getElementById("import").addEventListener("click", () => file.click());
+file.addEventListener("change", async () => {
+  try {
+    const data = JSON.parse(await file.files[0].text());
+    if (!Array.isArray(data)) throw new TypeError();
+    tasks = data;
+    update();
+  } catch {
+    alert("文件格式不正确");
+  }
+  file.value = "";
+});
+
+render();
+</script>
+</body>
+</html>
