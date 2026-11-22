@@ -92,6 +92,22 @@
     }
   }
 
+  .vbg-custom-dialog {
+    inline-size: min(26rem, 100% - 2 * var(--vbg-space-4));
+    padding: var(--vbg-space-6);
+    color: var(--vbg-text-primary);
+    background: var(--vbg-surface-primary);
+    border: 1px solid var(--vbg-border-default);
+    border-radius: var(--vbg-radius);
+    &::backdrop { background: oklch(0 0 0 / 0.5); }
+    & form { display: grid; gap: var(--vbg-space-4); margin: 0; }
+  }
+  .vbg-custom-actions {
+    display: flex;
+    justify-content: end;
+    gap: var(--vbg-space-2);
+  }
+
   @container (width < 45rem) {
     .vbg-custom-matrix { grid-template-columns: minmax(0, 1fr); }
     .vbg-custom-haxis, .vbg-custom-vaxis { display: none; }
@@ -116,6 +132,7 @@
         <button class="vbg-button" type="button" id="clear-done">清除已完成</button>
         <button class="vbg-button" type="button" id="export">导出</button>
         <button class="vbg-button" type="button" id="import">导入</button>
+        <button class="vbg-button" type="button" id="sync">同步</button>
         <input type="file" id="file" accept="application/json" hidden />
       </div>
     </form>
@@ -133,6 +150,17 @@
   </main>
 </div>
 
+<dialog id="sync-dialog" class="vbg-custom-dialog" closedby="any" aria-label="同步">
+  <form method="dialog">
+    <input type="password" name="token" placeholder="GitHub 令牌" aria-label="GitHub 令牌" autocomplete="off" />
+    <a href="https://github.com/settings/tokens/new?scopes=gist&amp;description=ike" target="_blank" rel="noreferrer">生成令牌</a>
+    <div class="vbg-custom-actions">
+      <button class="vbg-button" value="disconnect" id="disconnect">断开</button>
+      <button class="vbg-button" value="save">保存</button>
+    </div>
+  </form>
+</dialog>
+
 <template id="task-row">
   <li class="vbg-custom-task">
     <input type="checkbox" aria-label="完成" />
@@ -144,15 +172,25 @@
 <script type="module">
 const META = { 2: { type: "date", label: "计划日期" }, 3: { type: "text", label: "交给" } };
 const KEY = "ike-tasks";
+const SYNC_KEY = "ike-sync";
+const FILE = "ike.json";
 const matrix = document.getElementById("matrix");
 const form = document.getElementById("add");
 const file = document.getElementById("file");
+const syncButton = document.getElementById("sync");
+const dialog = document.getElementById("sync-dialog");
 const rowTemplate = document.getElementById("task-row").content.firstElementChild;
 let tasks = JSON.parse(localStorage.getItem(KEY) ?? "[]");
+let sync = JSON.parse(localStorage.getItem(SYNC_KEY) ?? "null");
+
+const live = () => tasks.filter(t => !t.deleted);
+const touch = t => Object.assign(t, { updatedAt: Date.now() });
+const tombstone = t => ({ id: t.id, deleted: true, updatedAt: Date.now() });
 
 function update() {
   localStorage.setItem(KEY, JSON.stringify(tasks));
   render();
+  schedulePush();
 }
 
 function renderTask(t) {
@@ -174,7 +212,7 @@ function renderTask(t) {
 const byDate = (a, b) => !a.meta - !b.meta || (a.meta ?? "").localeCompare(b.meta ?? "");
 
 function render() {
-  const groups = Object.groupBy(tasks, t => t.q);
+  const groups = Object.groupBy(live(), t => t.q);
   for (const sec of matrix.querySelectorAll("section")) {
     const q = Number(sec.dataset.q);
     const list = (groups[q] ?? []).toSorted((a, b) => a.done - b.done || (q === 2 ? byDate(a, b) : 0));
@@ -188,12 +226,13 @@ matrix.addEventListener("change", e => {
   const t = taskOf(e.target);
   if (e.target.type === "checkbox") t.done = e.target.checked;
   else t.meta = e.target.value;
+  touch(t);
   update();
 });
 matrix.addEventListener("click", e => {
   if (!e.target.matches(".vbg-custom-remove")) return;
   const t = taskOf(e.target);
-  tasks = tasks.filter(x => x !== t);
+  tasks = tasks.map(x => (x === t ? tombstone(x) : x));
   update();
 });
 matrix.addEventListener("dblclick", e => {
@@ -210,8 +249,9 @@ matrix.addEventListener("keydown", e => {
 });
 matrix.addEventListener("focusout", e => {
   if (!e.target.isContentEditable) return;
+  const t = taskOf(e.target);
   const title = e.target.textContent.trim();
-  if (title) taskOf(e.target).title = title;
+  if (title && title !== t.title) touch(t).title = title;
   update();
 });
 
@@ -220,19 +260,19 @@ form.addEventListener("submit", e => {
   const { title, important, urgent } = form.elements;
   const value = title.value.trim();
   if (!value) return;
-  tasks.push({ id: crypto.randomUUID(), title: value, q: 1 + !urgent.checked + 2 * !important.checked, done: false });
+  tasks.push(touch({ id: crypto.randomUUID(), title: value, q: 1 + !urgent.checked + 2 * !important.checked, done: false }));
   update();
   title.value = "";
   title.focus();
 });
 
 document.getElementById("clear-done").addEventListener("click", () => {
-  tasks = tasks.filter(t => !t.done);
+  tasks = tasks.map(t => (t.done && !t.deleted ? tombstone(t) : t));
   update();
 });
 document.getElementById("export").addEventListener("click", () => {
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([JSON.stringify(tasks, null, 2)], { type: "application/json" }));
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(live(), null, 2)], { type: "application/json" }));
   a.download = `ike-${new Date().toISOString().slice(0, 10)}.json`;
   a.click();
   URL.revokeObjectURL(a.href);
@@ -242,7 +282,8 @@ file.addEventListener("change", async () => {
   try {
     const data = JSON.parse(await file.files[0].text());
     if (!Array.isArray(data)) throw new TypeError();
-    tasks = data;
+    const ids = new Set(data.map(t => t.id));
+    tasks = [...tasks.filter(t => !ids.has(t.id)).map(tombstone), ...data.map(touch)];
     update();
   } catch {
     alert("文件格式不正确");
@@ -250,7 +291,102 @@ file.addEventListener("change", async () => {
   file.value = "";
 });
 
+function merge(base, incoming) {
+  const byId = new Map(base.map(t => [t.id, t]));
+  for (const t of incoming) {
+    if ((t.updatedAt ?? 0) > (byId.get(t.id)?.updatedAt ?? -1)) byId.set(t.id, t);
+  }
+  return [...byId.values()];
+}
+
+async function github(path, init = {}) {
+  const res = await fetch(`https://api.github.com${path}`, {
+    ...init,
+    cache: "no-store",
+    headers: { Authorization: `Bearer ${sync.token}`, Accept: "application/vnd.github+json" },
+  });
+  if (!res.ok) throw new Error(`GitHub ${res.status}`, { cause: res.status });
+  return res.json();
+}
+
+async function ensureGist() {
+  if (sync.gistId) return;
+  const gists = await github("/gists?per_page=100");
+  sync.gistId = gists.find(g => FILE in g.files)?.id ?? (await github("/gists", {
+    method: "POST",
+    body: JSON.stringify({ description: "ike", public: false, files: { [FILE]: { content: "[]" } } }),
+  })).id;
+  localStorage.setItem(SYNC_KEY, JSON.stringify(sync));
+}
+
+let running = null;
+let pending = false;
+let pushTimer;
+
+function schedulePush() {
+  clearTimeout(pushTimer);
+  if (sync) pushTimer = setTimeout(syncNow, 1000);
+}
+
+async function syncNow() {
+  if (!sync) return;
+  if (running) { pending = true; return; }
+  syncButton.textContent = "同步中";
+  running = (async () => {
+    try {
+      await ensureGist();
+      const remoteText = (await github(`/gists/${sync.gistId}`)).files[FILE]?.content ?? "[]";
+      const before = JSON.stringify(tasks);
+      tasks = merge(JSON.parse(remoteText), tasks);
+      const after = JSON.stringify(tasks);
+      if (after !== before) {
+        localStorage.setItem(KEY, after);
+        render();
+      }
+      if (after !== remoteText) {
+        await github(`/gists/${sync.gistId}`, { method: "PATCH", body: JSON.stringify({ files: { [FILE]: { content: after } } }) });
+      }
+      syncButton.textContent = "已同步";
+    } catch (error) {
+      if (error.cause === 404) sync.gistId = null;
+      syncButton.textContent = "同步失败";
+      console.error(error);
+    }
+  })();
+  await running;
+  running = null;
+  if (pending) {
+    pending = false;
+    syncNow();
+  }
+}
+
+syncButton.addEventListener("click", () => {
+  dialog.returnValue = "";
+  dialog.querySelector("[name=token]").value = sync?.token ?? "";
+  document.getElementById("disconnect").hidden = !sync;
+  dialog.showModal();
+});
+dialog.addEventListener("close", () => {
+  const token = dialog.querySelector("[name=token]").value.trim();
+  if (dialog.returnValue === "disconnect") {
+    sync = null;
+    localStorage.removeItem(SYNC_KEY);
+    syncButton.textContent = "同步";
+  }
+  if (dialog.returnValue === "save" && token) {
+    sync = { token, gistId: sync?.token === token ? sync.gistId : null };
+    localStorage.setItem(SYNC_KEY, JSON.stringify(sync));
+    syncNow();
+  }
+});
+
+document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && syncNow());
+addEventListener("online", syncNow);
+navigator.storage?.persist?.();
+
 render();
+syncNow();
 </script>
 </body>
 </html>
